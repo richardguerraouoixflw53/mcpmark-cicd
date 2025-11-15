@@ -117,3 +117,107 @@ jobs:
               issue_number: parentNumber,
               body: newBody
             });
+
+  auto-response:
+    runs-on: ubuntu-latest
+    needs: issue-triage
+    steps:
+      - name: Check First Time Contributor
+        id: first-time
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const author = context.payload.issue.user.login;
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              creator: author,
+              state: 'all'
+            });
+
+            return issues.data.length === 1; // only the current issue
+
+      - name: Add First Time Label and Welcome Message
+        if: steps.first-time.outputs.result == 'true'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              labels: ['first-time-contributor']
+            });
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body: "Welcome! This is your first issue in this repository. Thank you for contributing!"
+            });
+
+      - name: Post Response Based on Issue Type
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const labels = issue.labels.map(l => l.name);
+            let commentBody = "";
+
+            if (labels.includes('bug')) {
+              commentBody = "### Bug Report Guidelines\nPlease ensure you've provided all necessary details: steps to reproduce, expected behavior, and any relevant logs.";
+            } else if (labels.includes('epic')) {
+              commentBody = "### Feature Request Process\nThis epic will be broken down into sub-tasks. Please review the checklist added to this issue.";
+            } else if (labels.includes('maintenance')) {
+              commentBody = "### Maintenance Guidelines\nPlease outline the specific tasks and their impact on the project.";
+            }
+
+            if (commentBody) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: commentBody
+              });
+            }
+
+      - name: Set Milestone for High Priority
+        if: contains(github.event.issue.labels.*.name, 'priority-high') || contains(github.event.issue.labels.*.name, 'priority-critical')
+        uses: actions/github-script@v6
+        with:
+          script: |
+            // Find milestone v1.0.0
+            const milestones = await github.rest.issues.listMilestones({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open'
+            });
+
+            const milestone = milestones.data.find(m => m.title === 'v1.0.0');
+
+            if (milestone) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                milestone: milestone.number
+              });
+            }
+
+      - name: Update Status to Needs Review
+        uses: actions/github-script@v6
+        with:
+          script: |
+            await github.rest.issues.removeLabel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              name: 'needs-triage'
+            });
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              labels: ['needs-review']
+            });
